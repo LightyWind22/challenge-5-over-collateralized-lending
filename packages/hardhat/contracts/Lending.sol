@@ -45,52 +45,145 @@ contract Lending is Ownable {
     /**
      * @notice Allows users to add collateral to their account
      */
-    function addCollateral() public payable {}
+    function addCollateral() public payable {
+        // Revert if somebody calls it without value
+        if(msg.value <= 0) {
+            revert Lending__InvalidAmount();
+        }
+
+        // add collateral to user's account
+        s_userCollateral[msg.sender] += msg.value;
+
+        // emit event to frontend
+        emit CollateralAdded(msg.sender, msg.value, i_cornDEX.currentPrice());
+    }
 
     /**
      * @notice Allows users to withdraw collateral as long as it doesn't make them liquidatable
      * @param amount The amount of collateral to withdraw
      */
-    function withdrawCollateral(uint256 amount) public {}
+    function withdrawCollateral(uint256 amount) public {
+        // revert if somebody calls withdraw with invalid amount
+        if(amount <= 0 || amount > s_userCollateral[msg.sender]) {
+            revert Lending__InvalidAmount();
+        }
+
+        // reduce user's collateral
+        s_userCollateral[msg.sender] -= amount;
+
+        // check if user will not fall into unsafe's position after withdrawing.
+        _validatePosition(msg.sender);
+
+        // send collateral back to user's address
+        (bool success, ) = msg.sender.call{value: amount}("");
+        if(!success) {
+            revert Lending__TransferFailed();
+        }
+
+        // emit event to frontend
+        emit CollateralWithdrawn(msg.sender, amount, i_cornDEX.currentPrice());
+    }
 
     /**
      * @notice Calculates the total collateral value for a user based on their collateral balance
      * @param user The address of the user to calculate the collateral value for
      * @return uint256 The collateral value
      */
-    function calculateCollateralValue(address user) public view returns (uint256) {}
+    function calculateCollateralValue(address user) public view returns (uint256) {
+        return s_userCollateral[user] * i_cornDEX.currentPrice() / 1e18;
+    }
 
     /**
      * @notice Calculates the position ratio for a user to ensure they are within safe limits
      * @param user The address of the user to calculate the position ratio for
      * @return uint256 The position ratio
      */
-    function _calculatePositionRatio(address user) internal view returns (uint256) {}
+    function _calculatePositionRatio(address user) internal view returns (uint256) {
+        uint256 borrowedAmount = s_userBorrowed[user];
+
+        // If have not borrowed amount, return infinity max
+        if(borrowedAmount == 0) {
+            return type(uint256).max;
+        }
+
+        // return calculated ratio
+        return (calculateCollateralValue(user) * 1e18) / borrowedAmount; 
+    }
 
     /**
      * @notice Checks if a user's position can be liquidated
      * @param user The address of the user to check
      * @return bool True if the position is liquidatable, false otherwise
      */
-    function isLiquidatable(address user) public view returns (bool) {}
+    function isLiquidatable(address user) public view returns (bool) {
+        uint256 positionRatio = _calculatePositionRatio(user);
+
+        if (positionRatio == type(uint256).max) {
+            return false;
+        }
+
+        // Check if a user's position can be liquidated and return
+        return (positionRatio * 100) < (COLLATERAL_RATIO * 1e18);
+    }
 
     /**
      * @notice Internal view method that reverts if a user's position is unsafe
      * @param user The address of the user to validate
      */
-    function _validatePosition(address user) internal view {}
+    function _validatePosition(address user) internal view {
+        if(isLiquidatable(user)) {
+            revert Lending__UnsafePositionRatio();
+        }
+    }
 
     /**
      * @notice Allows users to borrow corn based on their collateral
      * @param borrowAmount The amount of corn to borrow
      */
-    function borrowCorn(uint256 borrowAmount) public {}
+    function borrowCorn(uint256 borrowAmount) public {
+        // check if borrow an invalid amount
+        if(borrowAmount <= 0) {
+            revert Lending__InvalidAmount();
+        }
+
+        // update state
+        s_userBorrowed[msg.sender] += borrowAmount;
+
+        // validate user's position
+        _validatePosition(msg.sender);
+
+        // move tokens to the user's address
+        bool success = i_corn.transfer(msg.sender, borrowAmount);
+        if(!success) {
+            revert Lending__BorrowingFailed();
+        }
+
+        // emit event to frontend
+        emit AssetBorrowed(msg.sender, borrowAmount, i_cornDEX.currentPrice());
+    }
 
     /**
      * @notice Allows users to repay corn and reduce their debt
      * @param repayAmount The amount of corn to repay
      */
-    function repayCorn(uint256 repayAmount) public {}
+    function repayCorn(uint256 repayAmount) public {
+        // check if user repay invalid amount
+        if (repayAmount <= 0 || repayAmount > s_userBorrowed[msg.sender]) {
+            revert Lending__InvalidAmount();
+        }
+
+        // update state reduce debt
+        s_userBorrowed[msg.sender] -= repayAmount;
+
+        // transfer relative CORN from user to lending contract
+        bool success = i_corn.transferFrom(msg.sender, address(this), repayAmount);
+        if(!success) {
+            revert Lending__RepayingFailed();
+        }
+
+        // emit event to frontend
+        emit AssetRepaid(msg.sender, repayAmount, i_cornDEX.currentPrice());
+    }
 
     /**
      * @notice Allows liquidators to liquidate unsafe positions
@@ -98,5 +191,101 @@ contract Lending is Ownable {
      * @dev The caller must have enough CORN to pay back user's debt
      * @dev The caller must have approved this contract to transfer the debt
      */
-    function liquidate(address user) public {}
+    function liquidate(address user) public {
+        // check if user is liquidatable
+        if(!isLiquidatable(user)) {
+            revert Lending__NotLiquidatable();
+        }
+
+        uint256 userDebt = s_userBorrowed[user];
+
+        // check if caller has enough CORN to liquidate the borrower's position
+        if(i_corn.balanceOf(msg.sender) < userDebt) {
+            revert Lending__InsufficientLiquidatorCorn();
+        }
+
+        // convert CORN into ETH
+        uint256 debtValueETH = (userDebt * 1e18) / i_cornDEX.currentPrice();
+
+        // calculate liquidator's reward
+        uint256 rewardAmountInETH = (debtValueETH * 10) / 100;
+
+        // calculate total amount of collateral
+        uint amountForLiquidator = debtValueETH + rewardAmountInETH;
+        
+        // if user collateral is not enough, send all user collateral
+        if (amountForLiquidator > s_userCollateral[user]) {
+            amountForLiquidator = s_userCollateral[user];
+        }
+
+        // clear user's debt and subtract user collateral
+        s_userBorrowed[user] = 0;
+        s_userCollateral[user] -= amountForLiquidator;
+
+        // transfer CORN from Liquidator to Lending Contract
+        bool success = i_corn.transferFrom(msg.sender, address(this), userDebt);
+        if(!success) {
+            revert Lending__TransferFailed();
+        }
+
+        // transfer total amount of collateral to liquidator
+        (bool success2, ) = payable(msg.sender).call{value: amountForLiquidator}("");
+        if(!success2) {
+            revert Lending__TransferFailed();
+        }
+
+        // emit event to frontend
+        emit Liquidation(user, msg.sender, amountForLiquidator, userDebt, i_cornDEX.currentPrice());
+    }
+
+    function flashLoan(IFlashLoanRecipient _recipient, uint256 _amount, address _extraParam) public {
+        // Send the loan to the recipient - No collateral is required since it gets repaid all in the same transaction
+        i_corn.transfer(address(_recipient), _amount);
+
+        // Execute the operation
+        bool success = _recipient.executeOperation(_amount, msg.sender, _extraParam);
+        require(success, "Operation was unsuccessful");
+
+        // Get the loan back - Should revert if it doesn't have enough
+        i_corn.transferFrom(address(_recipient), address(this), _amount);
+    }
+
+    function getMaxBorrowAmount(uint256 ethCollateralAmount) public view returns (uint256) {
+        if(ethCollateralAmount == 0) return 0;
+
+        // Calculate collateral value in CORN terms
+        uint256 collateralValue = ethCollateralAmount * i_cornDEX.currentPrice() / 1e18;
+
+        // Calculate max borrow amount while maintaining the required collateral ratio
+        // CollateralValue >= Debt * 120% = Debt * 120 / 100
+        return (collateralValue * 100) / COLLATERAL_RATIO;
+    }
+
+    function getMaxWithdrawableCollateral(address user) public view returns (uint256) {
+        // calculate max withdraw amount while maintaining the required collateral ratio
+        // CollateralValue >= Debt * 120% = Debt * 120 / 100 -> CollateralValue - withdrawAmount = Debt * 120 / 100
+        // -> withdrawAmount = CollateralValue - (Debt * 120 / 100)
+        
+        uint256 userDebt = s_userBorrowed[user];
+        uint256 userCollateral = s_userCollateral[user];
+
+        if(userDebt == 0) {
+            return userCollateral;
+        }
+        uint256 neededCollateralValueInCorn = (userDebt * COLLATERAL_RATIO) / 100;
+        uint256 neededEthAmount = (neededCollateralValueInCorn * 1e18) / i_cornDEX.currentPrice();
+
+        uint256 maxWithdrawAmount = userCollateral - neededEthAmount;
+
+        if(maxWithdrawAmount <= 0) {
+            return 0;
+        }
+
+        return maxWithdrawAmount;
+    }
 }
+
+interface IFlashLoanRecipient {
+    function executeOperation(uint256 amount, address initiator, address extraParam) external returns (bool);
+}
+
