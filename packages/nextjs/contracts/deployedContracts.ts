@@ -7,7 +7,7 @@ import { GenericContractsDeclaration } from "~~/utils/scaffold-eth/contract";
 const deployedContracts = {
   31337: {
     Corn: {
-      address: "0xE65FA718Fe0D7683eE6A4208D40e594F669A11A1",
+      address: "0x5FbDB2315678afecb367f032d93F642f64180aa3",
       abi: [
         {
           inputs: [],
@@ -445,10 +445,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 2087,
+      deployedOnBlock: 1,
     },
     CornDEX: {
-      address: "0x56962745c8Be080e09cEa4209B43016883D3640b",
+      address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
       abi: [
         {
           inputs: [
@@ -753,10 +753,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 2089,
+      deployedOnBlock: 3,
     },
     FlashLoanLiquidator: {
-      address: "0x452B235ef1D390a823081DE654d22b5d096aB997",
+      address: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
       abi: [
         {
           inputs: [
@@ -814,10 +814,10 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 2100,
+      deployedOnBlock: 14,
     },
     Lending: {
-      address: "0x2785951ECFF992eB6A50bb22Ea62db156016887b",
+      address: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
       abi: [
         {
           inputs: [
@@ -1283,10 +1283,10 @@ const deployedContracts = {
         renounceOwnership: "@openzeppelin/contracts/access/Ownable.sol",
         transferOwnership: "@openzeppelin/contracts/access/Ownable.sol",
       },
-      deployedOnBlock: 2091,
+      deployedOnBlock: 5,
     },
     MovePrice: {
-      address: "0xEf2d70E4a7297B31A1245253904a4cA975CA7e12",
+      address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
       abi: [
         {
           inputs: [
@@ -1327,7 +1327,7 @@ const deployedContracts = {
         },
       ],
       inheritedFunctions: {},
-      deployedOnBlock: 2093,
+      deployedOnBlock: 7,
     },
   },
   11155111: {
